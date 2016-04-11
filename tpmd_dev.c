@@ -74,33 +74,25 @@ static struct {
 /* module state */
 static uint32_t module_state;
 static struct socket *tpmd_sock;
-//static struct sockaddr_un addr;
 static struct sockaddr addr;
 
 static int tpmd_connect(char *socket_name,int port)
 {
   int res;
   struct sockaddr_in * tpm_addr;
-//  res = sock_create(PF_UNIX, SOCK_STREAM, 0, &tpmd_sock);
   res = sock_create(PF_INET, SOCK_STREAM, 0, &tpmd_sock);
   if (res != 0) {
     error("sock_create() failed: %d\n", res);
     tpmd_sock = NULL;
     return res;
   }
-//  addr.sun_family = AF_UNIX;
   tpm_addr =(struct sockaddr_in *)&addr;
   tpm_addr->sin_family=AF_INET;
-//  tpm_addr->sin_port=htons(TPM_SOCKET_PORT);
-//  tpm_addr->sin_addr.s_addr=in_aton(TPM_SOCKET_NAME);
   tpm_addr->sin_addr.s_addr=in_aton(socket_name);
   tpm_addr->sin_port=htons(port);
   memset(&(tpm_addr->sin_zero),'\0',8);
-//  strncpy(addr.sun_path, socket_name, sizeof(addr.sun_path));
-//  strncpy(addr.sa_data, &tpm_addr, sizeof(addr.sa_data));
   res = tpmd_sock->ops->connect(tpmd_sock, 
     (struct sockaddr*)&addr, sizeof(struct sockaddr), 0);
-//    (struct sockaddr*)&addr, sizeof(struct sockaddr_un), 0);
   if (res != 0) {
     error("sock_connect() failed: %d\n", res);
     tpmd_sock->ops->release(tpmd_sock);
@@ -119,21 +111,17 @@ static void tpmd_disconnect(void)
 static int tpmd_handle_command(const uint8_t *in, uint32_t in_size)
 {
   int res;
-  mm_segment_t oldmm;
   struct msghdr msg;
-  struct iovec iov;
+  struct kvec iov;
 
-// open device start
   res = tpmd_connect(tpmd_socket_name,tpmd_port);
  // open device end
 
   /* send command to tpmd */
   memset(&msg, 0, sizeof(msg));
-  iov.iov_base = (void*)in;
-  iov.iov_len = in_size;
-  msg.msg_iov = &iov;
-  msg.msg_iovlen = 1;
-  res = sock_sendmsg(tpmd_sock, &msg, in_size);
+    iov.iov_base = (void*)in;
+    iov.iov_len = in_size;
+   res = kernel_sendmsg(tpmd_sock, &msg, &iov,1,in_size);
   if (res < 0) {
     error("sock_sendmsg() failed: %d\n", res);
     return res;
@@ -143,17 +131,12 @@ static int tpmd_handle_command(const uint8_t *in, uint32_t in_size)
   tpm_response.data = kmalloc(tpm_response.size, GFP_KERNEL);
   if (tpm_response.data == NULL) return -1;
   memset(&msg, 0, sizeof(msg));
-  iov.iov_base = (void*)tpm_response.data;
-  iov.iov_len = tpm_response.size;
-  msg.msg_iov = &iov;
-  msg.msg_iovlen = 1;
-  oldmm = get_fs();
-  set_fs(KERNEL_DS);
-  res = sock_recvmsg(tpmd_sock, &msg, tpm_response.size, 0);
-  set_fs(oldmm);
+    iov.iov_base = (void*)tpm_response.data;
+    iov.iov_len = tpm_response.size;
+  res = kernel_recvmsg(tpmd_sock, &msg, &iov,1,tpm_response.size,0);
   if (res < 0) {
-    error("sock_recvmsg() failed: %d\n", res);
-    tpm_response.data = NULL;
+      error("sock_recvmsg() failed: %d\n", res);
+      tpm_response.data = NULL;
     return res;
   }
   tpm_response.size = res;
@@ -195,7 +178,6 @@ static int tpm_release(struct inode *inode, struct file *file)
     kfree(tpm_response.data);
     tpm_response.data = NULL;
   }
-//  tpmd_disconnect();
   up(&tpm_mutex);
   clear_bit(TPM_STATE_IS_OPEN, (void*)&module_state);
   return 0;
